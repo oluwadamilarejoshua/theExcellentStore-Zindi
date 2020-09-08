@@ -1,0 +1,215 @@
+#--------  Importing the train and test data ----------------------------------------------
+
+train = read.csv("train.csv", stringsAsFactors = F)
+test = read.csv("test.csv", stringsAsFactors = F)
+
+dim(train)
+dim(test)
+
+str(train)
+str(test)
+
+test$Item_Store_ID -> Item_Store_ID
+
+Item_Store_Returns = train$Item_Store_Returns   # Defining/separating the response
+train$Item_Store_Returns = NULL
+
+full_data = rbind(train, test)    # Combining train and test for cleaning
+dim(full_data)
+
+#------------------ Cleaning and Feature Engineering (train and test) ----------------------
+
+full_data = full_data[, -c(1, 3, 7, 10, 11)]
+real_Item_Price = full_data$Item_Price
+full_data$Trans_Item_Price = 1 / log(full_data$Item_Price)
+full_data$Item_Weight = as.numeric(full_data$Item_Weight)
+full_data$Trans_Visibility = sqrt(full_data$Item_Visibility)
+full_data$transVis_Visi = sqrt(full_data$Trans_Visibility / full_data$Item_Visibility)
+full_data$visi_price = sqrt(1 / full_data$Item_Visibility * full_data$Trans_Item_Price)
+full_data$visPri_Price = full_data$visi_price / full_data$Item_Price
+full_data$TVV_VPP = full_data$transVis_Visi / full_data$visPri_Price
+full_data$TVVVPP_rootPrice = full_data$TVV_VPP * sqrt(full_data$Item_Price)
+full_data$Another_comb = 1 / full_data$Store_Start_Year
+full_data$take = sqrt(full_data$Another_comb)
+#full_data$take_again = sqrt(full_data$take / full_data$transVis_Visi) /
+#  (full_data$take / full_data$transVis_Visi)
+#full_data$AC_Take = (full_data$Another_comb + full_data$take) / 
+#  (full_data$Another_comb * full_data$take)
+
+
+str(full_data)
+
+for (col in colnames(full_data)) {
+  if (typeof(full_data[, col]) == "character") {
+    coerceData = full_data[, col]
+    coerceData[is.na(coerceData)] = "missing"
+    full_data[, col] = as.factor(coerceData)
+  }
+}
+
+full_data$Store_Start_Year = as.factor(full_data$Store_Start_Year)
+
+# Splitting the data back to train and test
+
+the_train = full_data[1:nrow(train), ]
+the_train$Item_Store_Returns = Item_Store_Returns
+the_test = full_data[-c(1:nrow(train)), ]
+
+dim(the_train)
+
+the_train[is.na(the_train)] = -1
+the_test[is.na(the_test)] = -1
+
+
+# Correlation check
+
+for (col in colnames(the_train)) {
+  if (is.numeric(the_train[, col])) {
+    if (abs(cor(the_train[,col], the_train$Item_Store_Returns) > 0.5)) {
+      print(col)
+      print(cor(the_train[,col], the_train$Item_Store_Returns))
+    }
+  }
+}
+
+
+
+for (col in colnames(the_train)) {
+  if (is.numeric(the_train[, col])) {
+    if (abs(cor(the_train[,col], the_train$Item_Store_Returns) < 0.1)) {
+      print(col)
+      print(cor(the_train[,col], the_train$Item_Store_Returns))
+    }
+  }
+}
+
+
+auto_cors = cor(the_train[, sapply(the_train, is.numeric)])
+high_auto_cors = which(abs(auto_cors) > 0.5 && (abs(auto_cors < 1)))
+rows = rownames(auto_cors)[((high_auto_cors - 1) %/% 38) + 1]
+cols = colnames(auto_cors)[ifelse(high_auto_cors %% 38 == 0, 38, high_auto_cors %% 38)]
+vals = auto_cors[high_auto_cors]
+
+cor_data = data.frame(cols = cols, rows = rows, correlation = vals)
+cor_data
+
+
+# Plotting density
+for (col in colnames(the_train)) {
+  if (is.numeric(the_train[, col])) {
+    plot(density(the_train[, col]), main = col)
+  }
+}
+
+str(the_train)
+
+smp_size = floor(0.6 * nrow(the_train))
+set.seed(1234)
+
+train_ind = sample(seq_len(nrow(the_train)), size = smp_size)
+df_train = the_train[train_ind, ]
+df_test = the_train[-train_ind, ]
+
+dim(df_train)
+dim(df_test)
+
+
+
+library(utils)
+library(caret)
+library(plyr)
+library(xgboost)
+library(Metrics)
+
+df_metrics <- function(data, level = NULL, model = NULL) {
+  df_eval = rmse(data[, "obs"], data[, "pred"])
+  names(df_eval) = c("rmse")
+  df_eval
+}
+
+control = trainControl(method = "cv",
+                       number = 5,
+                       summaryFunction = df_metrics)
+
+# The first grid used
+# grid = expand.grid(nrounds = c(1000, 1200, 1500),
+#                   max_depth = c(6, 8, 10),
+#                   eta = c(0.025, 0.01),
+#                   gamma = c(0.1),
+#                   colsample_bytree = c(1),
+#                   min_child_weight = c(1),
+#                   subsample = c(0.8))
+
+
+# Third grid
+#grid = expand.grid(nrounds = c(1000, 1200, 1500, 1700),
+#                   max_depth = c(6, 8, 10, 12),
+#                   eta = c(0.025, 0.01, 0.005),
+#                   gamma = 0.1,
+#                   colsample_bytree = 1,
+#                   min_child_weight = 1,
+#                   subsample = 0.8)
+
+# Fourth grid
+#grid = expand.grid(nrounds = c(500, 700, 1000),
+#                   max_depth = c(2, 4, 6),
+#                   eta = c(0.005, 0.001),
+#                   gamma = c(0.05, 0.1, 0.5),
+#                   colsample_bytree = 1,
+#                   min_child_weight = 1,
+#                   subsample = 0.8)
+
+
+grid = expand.grid(nrounds = c(200),
+                   max_depth = c(2),
+                   eta = c(0.05),
+                   gamma = c(0.1),
+                   colsample_bytree = c(0.5),
+                   min_child_weight = c(0),
+                   subsample = c(0.8))
+
+
+set.seed(12)
+xgb_tree_model = train(Item_Store_Returns ~.,
+                       data = df_train,
+                       method = "xgbTree",
+                       trControl = control,
+                       tuneGrid = grid,
+                       metric = "rmse",
+                       maximize = FALSE,
+                       tuneLength = 10)
+
+xgb_tree_model$results
+xgb_tree_model$bestTune
+varImp(xgb_tree_model)
+
+test_prediction = 
+  predict(xgb_tree_model, newdata = df_test)
+
+
+model_eval_data = as.data.frame(
+  cbind(df_test$Item_Store_Returns, test_prediction))
+names(model_eval_data) <- c("obs", "pred")
+#model_eval_data
+
+rmse(model_eval_data$obs, model_eval_data$pred)
+
+
+submission_prediction = 
+  predict(xgb_tree_model, the_test)
+submission_table = as.data.frame(
+  cbind(Item_Store_ID, submission_prediction)
+)
+
+names(submission_table) <- c("Item_Store_ID", "submission")
+
+write.csv(submission_table, file = "myXGBoost_NewSubmission5.csv")
+
+
+# first rmse = 3084.248
+# second rmse = 3160.945 >> This one is nonsense   2898.387
+# third rmse = 3049.186
+# fourth rmse = 3021.829
+# fifth rmse = 2978.483   # 2978.394  #2970.412  #2967.661 #2909.932
+#2899.179  #2897.837
+# ninth rmse = 2837.797    2907.457    2900.516  2899.05 2896.828  2890.035
